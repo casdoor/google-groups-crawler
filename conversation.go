@@ -15,9 +15,7 @@
 package google_groups_crawler
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"strings"
 )
@@ -26,42 +24,13 @@ func (c GoogleGroupConversation) GetAllMessages(client http.Client, removeGmailQ
 	targetUrl := fmt.Sprintf("https://groups.google.com/g/%s/c/%s", c.GroupName, c.Id)
 	var ret []GoogleGroupMessage
 
-	req, _ := http.NewRequest("GET", targetUrl, nil)
-	req.Header.Set("cookie", c.Cookie)
-	res, _ := client.Do(req)
-
-	if res == nil {
+	body, ok := getPage(client, targetUrl, c.Cookie)
+	if !ok {
 		return ret
 	}
 
-	defer res.Body.Close()
-
-	if res.Body == nil {
-		return ret
-	}
-
-	if res.StatusCode != 200 {
-		fmt.Printf("Google Groups Crawler: http GET request status code: %d\n", res.StatusCode)
-		return ret
-	}
-	resp, _ := ioutil.ReadAll(res.Body)
-	body := string(resp)
-
-	start := strings.LastIndex(body, "AF_initDataCallback({key: 'ds")
-	end := strings.LastIndex(body, ", sideChannel: {}});")
-	if start >= end {
-		return ret
-	}
-	body = body[start:end]
-	start = strings.Index(body, "data:")
-	if start < 0 {
-		return ret
-	}
-	body = body[start+5:]
-
-	var dataArray []interface{}
-	err := json.Unmarshal([]byte(body), &dataArray)
-	if err != nil {
+	dataArray, ok := getInitData(body, rpcListMessages)
+	if !ok {
 		return ret
 	}
 	if len(dataArray) < 3 {
@@ -86,18 +55,24 @@ func (c GoogleGroupConversation) GetAllMessages(client http.Client, removeGmailQ
 		if !ok || len(singleMsgArray0) < 9 {
 			continue
 		}
-		singleMsgArray2, ok := singleMsgArray[2].([]interface{})
-		if ok && len(singleMsgArray2) > 0 {
-			for _, singleFileArray := range singleMsgArray2 {
-				singleFile, ok := singleFileArray.([]interface{})
-				if !ok || len(singleFile) < 5 {
-					continue
+		// attachments are only present when the message has any
+		if len(singleMsgArray) > 2 {
+			singleMsgArray2, ok := singleMsgArray[2].([]interface{})
+			if ok && len(singleMsgArray2) > 0 {
+				for _, singleFileArray := range singleMsgArray2 {
+					singleFile, ok := singleFileArray.([]interface{})
+					if !ok || len(singleFile) < 5 {
+						continue
+					}
+					fileName, _ := singleFile[4].(string)
+					fileUrl, _ := singleFile[0].(string)
+					fileType, _ := singleFile[3].(string)
+					files = append(files, GoogleGroupFile{
+						FileName: fileName,
+						Url: fileUrl,
+						Type: fileType,
+					})
 				}
-				files = append(files, GoogleGroupFile{
-					FileName: singleFile[4].(string),
-					Url: singleFile[0].(string),
-					Type: singleFile[3].(string),
-				})
 			}
 		}
 		authorEmailArray, ok := singleMsgArray0[2].([]interface{})
@@ -105,16 +80,18 @@ func (c GoogleGroupConversation) GetAllMessages(client http.Client, removeGmailQ
 			continue
 		}
 		authorEmailArray, ok = authorEmailArray[0].([]interface{})
-		if !ok || len(authorEmailArray) < 3 {
+		if !ok || len(authorEmailArray) < 1 {
 			continue
 		}
 		author, ok := authorEmailArray[0].(string)
 		if !ok {
 			continue
 		}
-		email, ok := authorEmailArray[2].(string)
-		if !ok {
-			continue
+		// the email is null unless the cookie of a group member is provided,
+		// and senders without a Google account only have a name
+		email := ""
+		if len(authorEmailArray) > 2 {
+			email, _ = authorEmailArray[2].(string)
 		}
 		singleMsgArray0, ok = singleMsgArray0[8].([]interface{})
 		if !ok || len(singleMsgArray0) < 1 {

@@ -15,53 +15,55 @@
 package google_groups_crawler
 
 import (
-	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"net/http"
-	"strings"
 )
+
+// conversations per page, the same as the Google Groups web page
+const conversationPageSize = 30
 
 func (g GoogleGroup) GetAllConversations(client http.Client) []GoogleGroupConversation {
 	targetUrl := fmt.Sprintf("https://groups.google.com/g/%s", g.GroupName)
 	var ret []GoogleGroupConversation
 
-	req, _ := http.NewRequest("GET", targetUrl, nil)
-	res, _ := client.Do(req)
-	if res == nil {
+	body, ok := getPage(client, targetUrl, g.Cookie)
+	if !ok {
 		return ret
 	}
 
-	defer res.Body.Close()
+	// the page only contains the first page of conversations
+	dataArray, ok := getInitData(body, rpcListConversations)
+	if !ok {
+		return ret
+	}
+	ret = append(ret, g.parseConversations(dataArray)...)
 
-	if res.Body == nil {
-		return ret
+	// load the remaining pages the same way as scrolling down in the web page
+	groupEmail := getGroupEmail(dataArray)
+	xsrfToken := getXsrfToken(body)
+	pageToken := getPageToken(dataArray)
+	for groupEmail != "" && pageToken != "" {
+		dataArray, ok = batchExecute(client, g.Cookie, xsrfToken, rpcListConversations,
+			[]interface{}{groupEmail, conversationPageSize, pageToken, []interface{}{}, 2})
+		if !ok {
+			break
+		}
+		ret = append(ret, g.parseConversations(dataArray)...)
+		pageToken = getPageToken(dataArray)
 	}
+	return ret
+}
 
-	if res.StatusCode != 200 {
-		fmt.Printf("Google Groups Crawler: http GET request status code: %d\n", res.StatusCode)
-		return ret
+func getPageToken(dataArray []interface{}) string {
+	if len(dataArray) < 4 {
+		return ""
 	}
-	resp, _ := ioutil.ReadAll(res.Body)
-	body := string(resp)
+	pageToken, _ := dataArray[3].(string)
+	return pageToken
+}
 
-	start := strings.LastIndex(body, "AF_initDataCallback({key: 'ds:")
-	end := strings.LastIndex(body, ", sideChannel: {}});")
-	if start >= end {
-		return ret
-	}
-	body = body[start:end]
-	start = strings.Index(body, "data:")
-	if start < 0 {
-		return ret
-	}
-	body = body[start+5:]
-
-	var dataArray []interface{}
-	err := json.Unmarshal([]byte(body), &dataArray)
-	if err != nil {
-		return ret
-	}
+func (g GoogleGroup) parseConversations(dataArray []interface{}) []GoogleGroupConversation {
+	var ret []GoogleGroupConversation
 	if len(dataArray) < 3 {
 		return ret
 	}

@@ -32,10 +32,10 @@ It is OK to leave `cookie` blank, code still works. But `AuthorEmail` in `Google
 ### Get all conversations of the group
 
 - For some special reasons, you cannot access Google Groups in some area. You can set up a http proxy, and fill the parameter `http.Client` with it. If you can access Google Groups directly, then you can just fill the parameter like the example code.
-- this function returns an array of `GoogleGroupConversation`
+- this function returns an array of `GoogleGroupConversation`, it loads all pages of the group (30 conversations per page) like scrolling down in the web page
 
 ``` go
-conversations := group.GetConversations(http.Client{})
+conversations := group.GetAllConversations(http.Client{})
 ```
 
 ### Get all messages of the conversation
@@ -69,5 +69,12 @@ type GoogleGroupMessage struct {
     AuthorEmail string
     Content     string
     Time        float64
+    Files       []GoogleGroupFile
+}
+
+type GoogleGroupFile struct {
+    FileName string
+    Url      string
+    Type     string
 }
 ```
