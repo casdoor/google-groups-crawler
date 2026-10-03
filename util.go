@@ -17,7 +17,7 @@ package google_groups_crawler
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -44,7 +44,9 @@ func doRequest(client http.Client, req *http.Request) (string, bool) {
 		return "", false
 	}
 
-	defer res.Body.Close()
+	defer func() {
+		_ = res.Body.Close()
+	}()
 
 	if res.Body == nil {
 		return "", false
@@ -54,7 +56,7 @@ func doRequest(client http.Client, req *http.Request) (string, bool) {
 		fmt.Printf("Google Groups Crawler: http %s request status code: %d\n", req.Method, res.StatusCode)
 		return "", false
 	}
-	resp, err := ioutil.ReadAll(res.Body)
+	resp, err := io.ReadAll(res.Body)
 	if err != nil {
 		return "", false
 	}
